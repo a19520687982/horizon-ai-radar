@@ -55,9 +55,12 @@ def test_generate_webhook_item_renders_single_item_detail():
     )
 
     assert result.startswith("Item 1/2")
-    assert "## [Important Item 1](https://example.com/items/1)" in result
+    assert "## Important Item 1 ⭐️ 8.0/10" in result
+    assert "**Type：**" in result
+    assert "**One-Sentence Summary：**" in result
+    assert "**Risk Warning：**" in result
     assert "Summary for item 1." in result
-    assert "**Tags**: `#AI`, `#News`" in result
+    assert "- [原文](https://example.com/items/1)" in result
 
 
 def test_generate_webhook_item_includes_discussion_link_when_distinct():
@@ -72,7 +75,8 @@ def test_generate_webhook_item_includes_discussion_link_when_distinct():
         total=1,
     )
 
-    assert "tester · Apr 25, 08:00 · [Discussion](https://news.ycombinator.com/item?id=1)" in result
+    assert "tester · Apr 25, 08:00" in result
+    assert "[Discussion](https://news.ycombinator.com/item?id=1)" in result
 
 
 def test_generate_webhook_item_omits_discussion_link_when_same_as_item_url():
@@ -105,6 +109,26 @@ def test_generate_webhook_item_uses_localized_discussion_label():
     assert "[社区讨论](https://www.reddit.com/r/python/comments/abc123/test/)" in result
 
 
+def test_generate_webhook_item_filters_ad_reference_links():
+    summarizer = DailySummarizer()
+    item = _make_item(1)
+    item.url = "https://www.bing.com/aclick?ld=ad"
+    item.metadata["sources"] = [
+        {"title": "Ad", "url": "https://www.bing.com/aclick?ld=ad2"},
+        {"title": "Real Reference", "url": "https://example.org/real"},
+    ]
+
+    result = summarizer.generate_webhook_item(
+        item,
+        language="zh",
+        index=1,
+        total=1,
+    )
+
+    assert "bing.com/aclick" not in result
+    assert "[Real Reference](https://example.org/real)" in result
+
+
 def test_generate_summary_zh_uses_localized_selection_header_and_numeric_date():
     summarizer = DailySummarizer()
     item = _make_item(1)
@@ -120,6 +144,9 @@ def test_generate_summary_zh_uses_localized_selection_header_and_numeric_date():
 
     assert "> 从 10 条内容中筛选出 1 条重要资讯。" in result
     assert "rss · tester · 4月25日 08:00" in result
+    assert "**类型：**" in result
+    assert "**电商/赚钱机会：**" in result
+    assert "**风险提醒：**" in result
     assert "From 10 items" not in result
     assert "Apr 25, 08:00" not in result
 

@@ -524,9 +524,17 @@ class HorizonOrchestrator:
 
         sorted_items = sorted(
             items,
-            key=lambda item: item.ai_score or 0,
+            key=self._opportunity_sort_key,
             reverse=True,
         )
+        if max_items is not None:
+            opportunity_items = [
+                item
+                for item in sorted_items
+                if self._opportunity_sort_key(item)[0] >= 45
+            ]
+            if opportunity_items:
+                sorted_items = opportunity_items
 
         category_to_group: Dict[str, str] = {}
         duplicate_categories: List[str] = []
@@ -612,6 +620,242 @@ class HorizonOrchestrator:
             group_limits=group_limits,
             duplicate_categories=sorted(set(duplicate_categories)),
         )
+
+    @classmethod
+    def _opportunity_sort_key(cls, item: ContentItem) -> tuple[float, int, int, float]:
+        """Sort by beginner opportunity first, then actionability, then AI score."""
+        text = cls._sort_text(item)
+        priority = cls._opportunity_priority(text, item)
+        actionability = cls._actionability_score(text)
+        penalty = cls._low_value_penalty(text)
+        ai_score = float(item.ai_score or 0)
+        return (priority + actionability - penalty, priority, actionability, ai_score)
+
+    @staticmethod
+    def _sort_text(item: ContentItem) -> str:
+        """Build a lightweight text blob for pre-enrichment opportunity sorting."""
+        meta = item.metadata or {}
+        fields = [
+            item.title or "",
+            item.ai_summary or "",
+            item.ai_reason or "",
+            item.content or "",
+            " ".join(item.ai_tags or []),
+            item.source_type.value or "",
+            str(item.url or ""),
+            str(meta.get("repo") or ""),
+            str(meta.get("feed_name") or ""),
+            str(meta.get("subreddit") or ""),
+            str(meta.get("description") or ""),
+        ]
+        return " ".join(fields).lower()
+
+    @staticmethod
+    def _has_any(text: str, keywords: tuple[str, ...]) -> bool:
+        """Return whether any keyword appears in the text blob."""
+        return any(keyword in text for keyword in keywords)
+
+    @classmethod
+    def _opportunity_priority(cls, text: str, item: ContentItem) -> int:
+        """Classify an item into the user's opportunity-first priority ladder."""
+        priority = 0
+        ai_markers = ("ai", "llm", "gpt", "claude", "gemini", "openai", "anthropic", "人工智能", "大模型", "模型")
+        ai_related = cls._has_any(text, ai_markers)
+
+        if (
+            cls._has_any(text, ("ai tool", "ai app", "new ai", "ai product", "ai model", "ai 平台", "ai 工具"))
+            or (ai_related and cls._has_any(text, ("tool", "app", "product", "model", "工具", "产品", "模型", "平台")))
+        ):
+            priority = max(priority, 100)
+        if item.source_type.value in ("github", "ossinsight") or cls._has_any(
+            text, ("github", "repo", "repository", "open source", "开源")
+        ):
+            priority = max(priority, 94)
+        if cls._has_any(text, ("automation", "workflow", "agent", "n8n", "zapier", "自动化", "工作流", "智能体")):
+            priority = max(priority, 90)
+        if cls._has_any(
+            text,
+            (
+                "image",
+                "video",
+                "voice",
+                "audio",
+                "speech",
+                "tts",
+                "生成图",
+                "图像",
+                "视频",
+                "语音",
+                "音频",
+            ),
+        ):
+            priority = max(priority, 86)
+        if cls._has_any(
+            text,
+            ("cursor", "claude code", "codex", "copilot", "coding", "code", "developer tool", "编程", "代码"),
+        ):
+            priority = max(priority, 82)
+        if cls._has_any(text, ("local ai", "local llm", "ollama", "lm studio", "本地 ai", "本地模型", "本地大模型")):
+            priority = max(priority, 78)
+        if cls._has_any(text, ("learn", "learning", "tutorial", "course", "guide", "how to", "学习", "教程", "课程", "指南")):
+            priority = max(priority, 72)
+        if cls._has_any(
+            text,
+            (
+                "creator",
+                "content",
+                "newsletter",
+                "marketing",
+                "ecommerce",
+                "e-commerce",
+                "shopify",
+                "amazon",
+                "tiktok",
+                "小红书",
+                "自媒体",
+                "电商",
+                "带货",
+                "营销",
+                "文案",
+            ),
+        ):
+            priority = max(priority, 68)
+        if ai_related:
+            priority = max(priority, 52)
+
+        non_ai_opportunity = cls._has_any(
+            text,
+            (
+                "creator",
+                "content",
+                "newsletter",
+                "marketing",
+                "ecommerce",
+                "e-commerce",
+                "shopify",
+                "amazon",
+                "tiktok",
+                "小红书",
+                "自媒体",
+                "电商",
+                "带货",
+                "营销",
+                "文案",
+            ),
+        )
+        if non_ai_opportunity and not (
+            ai_related
+            or item.source_type.value in ("github", "ossinsight")
+            or cls._has_any(text, ("github", "open source", "开源", "automation", "自动化", "agent", "智能体"))
+        ):
+            priority = min(priority, 40)
+
+        low_value_markers = (
+            "kubernetes",
+            "devops",
+            "compiler",
+            "kernel",
+            "runtime",
+            "sdk",
+            "distributed",
+            "verifiable execution",
+            "cryptographic",
+            "dapr",
+            "api gateway",
+            "payment gateway",
+            "x402",
+            "security patch",
+            "vulnerability",
+            "cve",
+            "crypto",
+            "blockchain",
+            "trading",
+            "论文",
+            "研究论文",
+            "arxiv",
+            "benchmark",
+            "基准测试",
+            "科研",
+        )
+        practical_markers = (
+            "tool",
+            "工具",
+            "github",
+            "open source",
+            "开源",
+            "tutorial",
+            "教程",
+            "demo",
+            "试用",
+            "automation",
+            "自动化",
+            "ecommerce",
+            "电商",
+            "creator",
+            "自媒体",
+            "普通人",
+            "小白",
+            "content",
+            "marketing",
+        )
+        if cls._has_any(text, low_value_markers) and not cls._has_any(text, practical_markers):
+            priority = min(priority, 20)
+        if cls._has_any(text, low_value_markers) and not cls._has_any(
+            text,
+            (
+                "creator",
+                "自媒体",
+                "ecommerce",
+                "电商",
+                "tutorial",
+                "教程",
+                "content",
+                "marketing",
+                "普通人",
+                "小白",
+                "no-code",
+                "无需代码",
+            ),
+        ):
+            priority = min(priority, 35)
+
+        return priority
+
+    @classmethod
+    def _actionability_score(cls, text: str) -> int:
+        """Score whether a beginner can try it or turn it into an opportunity."""
+        score = 0
+        groups = (
+            ("try", "demo", "free", "beta", "download", "install", "use", "试用", "免费", "下载", "安装"),
+            ("github", "open source", "ollama", "lm studio", "cursor", "copilot", "claude code", "codex"),
+            ("tutorial", "guide", "template", "course", "教程", "指南", "模板", "课程"),
+            ("creator", "content", "short video", "newsletter", "小红书", "短视频", "公众号", "自媒体"),
+            ("ecommerce", "shopify", "amazon", "product image", "customer service", "电商", "商品图", "客服", "文案"),
+            ("automation", "workflow", "agent", "zapier", "n8n", "自动化", "工作流", "智能体"),
+            ("service", "consulting", "freelance", "agency", "赚钱", "接单", "服务", "咨询"),
+            ("action", "next step", "建议动作", "深挖", "收藏"),
+        )
+        for keywords in groups:
+            if cls._has_any(text, keywords):
+                score += 4
+        return score
+
+    @classmethod
+    def _low_value_penalty(cls, text: str) -> int:
+        """Lower pure technical, academic, policy, debate, or rumor items."""
+        penalty = 0
+        penalty_groups = (
+            ("kubernetes", "devops", "compiler", "kernel", "infra", "infrastructure", "底层", "基础设施"),
+            ("security patch", "vulnerability", "cve", "安全补丁", "漏洞"),
+            ("crypto", "blockchain", "trading", "加密货币", "币圈", "交易", "区块链"),
+            ("paper", "arxiv", "benchmark", "research", "论文", "科研", "基准测试"),
+            ("policy", "regulation", "政治", "政策"),
+            ("debate", "controversy", "rumor", "leak", "争论", "争议", "爆料", "传闻"),
+        )
+        for keywords in penalty_groups:
+            if cls._has_any(text, keywords):
+                penalty += 8
+        return penalty
 
     async def _expand_twitter_discussion(self, items: List[ContentItem]) -> None:
         """Second-stage: fetch reply text for important Twitter items and re-analyze.
